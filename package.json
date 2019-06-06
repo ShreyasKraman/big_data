@@ -1,0 +1,43 @@
+{
+  "name": "bigdata",
+  "version": "1.0.0",
+  "description": "A project on bigdata technologies using redis cache, etags, OAuth, GraphQL and of course Rest API!",
+  "main": "server.js",
+  "scripts": {
+    "start": "nodemon server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/ShreyasKraman/big_data.git"
+  },
+  "keywords": [
+    "rest",
+    "api",
+    "redis",
+    "etag",
+    "oauth",
+    "graphql"
+  ],
+  "author": "Shreyas Kalyanaraman",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ShreyasKraman/big_data/issues"
+  },
+  "homepage": "https://github.com/ShreyasKraman/big_data#readme",
+  "dependencies": {
+    "babel-cli": "^6.26.0",
+    "babel-core": "^6.26.3",
+    "babel-loader": "^8.0.6",
+    "babel-polyfill": "^6.26.0",
+    "babel-preset-es2015": "^6.24.1",
+    "body-parser": "^1.19.0",
+    "etag": "^1.8.1",
+    "express": "^4.17.1",
+    "express-generator": "^4.16.1",
+    "jsonschema": "^1.2.4",
+    "nodemon": "^1.19.1",
+    "redis": "^2.8.0",
+    "uuid": "^3.3.2"
+  }
+}
