@@ -58,17 +58,21 @@ const ifNoneMatch = async (etag,id) => {
 
     if(res.status === 200){
         const parameters = [];
-        const body = res.message;
-        for (values in body){
+        const body = res.body;
+        for (let values in body){
             parameters.push(values);
             parameters.push(body[values]);
         }
 
-        console.log(parameters);
+        console.log("etag params",parameters);
         //set etag
         await client.set(id+"_ETAG",etag);
         //set values to etag
-        await client.hmset(etag,parameters);
+        await client.hmset(etag,parameters, (err,res) => {
+            if(err){
+                console.log("ETAG ERROR",err);
+            }
+        });
 
         return success(body,200);
     }
@@ -86,7 +90,6 @@ const ifMatch = async (etag) => {
         const getAsync = promisify(client.hgetall).bind(client);
 
         const res = await getAsync(etag);
-
 
         if(res){
             return success(res,200);
@@ -158,7 +161,7 @@ const updatePlan = async(id,body) => {
 
             await setParameters("",body);
 
-            await deletePlan(id);            
+            await deletePlanETAG(id);            
 
             return("Value updated successfully");
 
@@ -170,35 +173,37 @@ const updatePlan = async(id,body) => {
 
 };
 
-const deletePlan = async(id) => {
 
-    if(id){
+
+const deletePlan = async(id) => {
+    if (id){
         const client = await getRedisClient();
 
         const res = await getById(id);
-
-        if(res.status === 200){
-
-            //GET Cooresponding etag
-            const res = client.get(id+"_ETAG");
-            //delete etag reference
-            client.del(id+"_ETAG");
-            for(let values in body){
+        if(res.success){
+            const parameters = [];
+            console.log("Delete id",res);
+            for(let values in res.body){
                 //delete corresponding values of etag
-                client.HDEL(res,values);
+                parameters.push(values);
+                parameters.push(res.body[values]);
             }
+            
+            console.log(parameters);
+            client.HDEL(id,parameters);
 
-            return success("Values deleted",200);
+            await deletePlanETAG(id);
+
+            return success("Values Deleted",200);
 
         }
 
-        return error("Error",401);
+        return error("Error",404);
 
     }
 
     return error("Id must be provided",401);
-
-};
+}
 
 const setParameters = async (superkey, data) => {
     if(typeof data === 'object'){
@@ -231,6 +236,51 @@ const setParameters = async (superkey, data) => {
 
     }
 }
+
+const deletePlanETAG = async(id) => {
+
+    if(id){
+        const client = await getRedisClient();
+
+        let res = await getById(id);
+
+        if(res.success){
+
+            //GET Corresponding etag
+            let getAsync = promisify(client.get).bind(client);
+            const etagid = await getAsync(id+"_ETAG");
+
+            console.log(etagid);
+
+            if(etagid){
+
+                //delete etag reference
+                client.del(id+"_ETAG");
+
+                getAsync = promisify(client.hgetall).bind(client);
+                res = await getAsync(etagid);
+                
+                console.log("Etagid",res);
+                const parameters = [];
+                for(let values in res){
+                    //delete corresponding values of etag
+                    parameters.push(values);
+                    parameters.push(res[values]);
+                }
+                client.HDEL(etagid,parameters);
+            }
+
+            return success("Values deleted",200);
+
+        }
+
+        return error("Error",401);
+
+    }
+
+    return error("Id must be provided",401);
+
+};
 
 const compare = (id, etag) => {
 

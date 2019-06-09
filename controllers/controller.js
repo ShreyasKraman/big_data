@@ -12,15 +12,18 @@ const getByIdController = async (req,res) => {
 
         let result = "";
 
-        const etag = req.get('IF-NONE-MATCH');
+        let etag = "";
 
         if(req.get('IF-MATCH')){
 
+            etag = req.get('IF-MATCH');
             result = await services.ifMatch(etag);
 
         }
 
         if(req.get('IF-NONE-MATCH')){
+
+            etag = req.get('IF-NONE-MATCH');
 
             result = await services.ifNoneMatch(etag,id);
     
@@ -34,6 +37,10 @@ const getByIdController = async (req,res) => {
 
         if(result.success){
             res.status(result.status);
+        }
+
+        if(!result){
+            res.status(401).send({error:true,body:'IF-MATCH, IF-NONE-MATCH header mandatory'});
         }
 
         return res.send(result);
@@ -78,7 +85,17 @@ const putController = async (req,res) => {
 };
 
 const deleteController = async (req,res) => {
+    const id = req.query.id;
 
+    const result = await services.deletePlan(id);
+
+    if(result.error)
+        res.status(result.status);
+
+    if(result.success)
+        res.status(result.status);
+
+    res.send(result);
 };
 
 export default {

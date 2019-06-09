@@ -16,6 +16,6 @@ router.post('/plan', restController.postController )
 router.put('/plan', restController.putController)
 
 //delete plan by id
-router.delete('/plan/:id', restController.deleteController)
+router.delete('/plan', restController.deleteController)
 
 module.exports = router;
