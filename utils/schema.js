@@ -1,7 +1,7 @@
 //JSON Schema for REST API
 
 const planCostSharesSchema = {
-    "id":"/PlanCostShares",
+    "id":"/planCostShares",
     "type":"object",
     "properties": {
         "deductible": {"type" : "number"},
@@ -26,7 +26,7 @@ const linkedServiceSchema = {
 };
 
 const planserviceCostSharesSchema = {
-    "id":"planserviceCostSharesSchema",
+    "id":"/planserviceCostShares",
     "type":"object",
     "properties": {
         "deductible": {"type":"number"},
@@ -61,7 +61,7 @@ const linkedPlanServicesSchema = {
 
 const JsonSchema = 
 {   
-    "id":"jsonSchema",
+    "id":"/jsonSchema",
     "type":"object",
     "properties":{
         "planCostShares": {"$ref":"/planCostShares"},
@@ -75,4 +75,10 @@ const JsonSchema =
     "required":["objectId","objectType"],
 }
 
-export default JsonSchema;
+module.exports = {
+    planCostSharesSchema,
+    linkedPlanServicesSchema,
+    linkedServiceSchema,
+    planserviceCostSharesSchema,
+    JsonSchema
+}

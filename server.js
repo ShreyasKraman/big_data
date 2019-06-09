@@ -1,25 +1,20 @@
 import express from 'express';
-import redis from 'redis';
-import routers from './router/router';
+import router from './router/router';
 
 
 const app = express();
 
-//create and connect redis client
-const client = redis.createClient();
-
-// output redis errors to console
-client.on('error', (err) => {
-    console.log("error",err);
-})
-
 //Parse the request into body
 app.use(express.json());
+
+//Set strong etag
+// app.enable('etag');
+app.set('etag','strong');
 
 //Check if its working
 app.get('/', (req, res) => res.send('App is working'));
  
-app.use('/plan', routers);
+app.use('/plan', router);
 
 const PORT = 3000;
 

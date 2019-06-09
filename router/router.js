@@ -1,13 +1,13 @@
-const express = require('express');
+import express from 'express';
 
-const { restController } = require('./Controllers/Controller');
+import restController from '../controllers/controller';
 
 const router = express.Router();
 
 //Get all plans
-router.get('/plan', restController.getAllController)
+// router.get('/plan', restController.getAllController)
 //get plan by id
-router.get('/plan/:Id', restController.getByIdController)
+router.get('/plan', restController.getByIdController)
 
 //post plan
 router.post('/plan', restController.postController )
@@ -16,6 +16,6 @@ router.post('/plan', restController.postController )
 router.put('/plan', restController.putController)
 
 //delete plan by id
-router.delete('/delete/:id', restController.deleteController)
+router.delete('/plan/:id', restController.deleteController)
 
 module.exports = router;
