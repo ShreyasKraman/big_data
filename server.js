@@ -14,7 +14,7 @@ app.set('etag','strong');
 //Check if its working
 app.get('/', (req, res) => res.send('App is working'));
  
-app.use('/plan', router);
+app.use('/', router);
 
 const PORT = 3000;
 

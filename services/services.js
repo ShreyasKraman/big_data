@@ -1,7 +1,9 @@
 import { validateJson } from '../utils/validation';
 import { success, error } from '../utils/response';
 import { getRedisClient } from '../dbstore/redis';
-import {pormisify, promisify} from 'util';
+import {promisify} from 'util';
+import uuid from 'uuid/v4';
+
 
 const getAll = async() => {
 
@@ -13,12 +15,21 @@ const getById = async(id) => {
 
     if(client){
 
-        const getAsync = promisify(client.hgetall).bind(client);
+        let getAsync = promisify(client.get).bind(client);
 
-        const res = await getAsync(id);
+        const json_id = await getAsync(id.trim());
 
-        if(res){
-            return success(res, 200);
+        console.log(id,json_id);
+
+        if(json_id){
+
+            getAsync = promisify(client.hgetall).bind(client);
+
+            const res = await getAsync(json_id);
+
+            if(res){
+                return success(res, 200);
+            }
         }
 
         return success("No corresponding values found", 204);
@@ -48,13 +59,17 @@ const ifNoneMatch = async (etag,id) => {
     
     //3. a. For first request
     if(etag === '*'){
-        return getById(id);
+        res = getById(id);
+        if(res.success){
+            return await buildResponse(res.body);
+        }
+        return error("No data found",204);
     }
 
     //3. b. For subsequent request, store etag with id's value
     res = await getById(id);
 
-    console.log(res);
+    // console.log(res);
 
     if(res.status === 200){
         const parameters = [];
@@ -64,7 +79,7 @@ const ifNoneMatch = async (etag,id) => {
             parameters.push(body[values]);
         }
 
-        console.log("etag params",parameters);
+        // console.log("etag params",parameters);
         //set etag
         await client.set(id+"_ETAG",etag);
         //set values to etag
@@ -92,6 +107,7 @@ const ifMatch = async (etag) => {
         const res = await getAsync(etag);
 
         if(res){
+
             return success(res,200);
         }
         
@@ -119,25 +135,40 @@ const createPlan = async (body) => {
 
             let super_key = jsonBody["objectId"] + "_" + jsonBody["objectType"];
             let parameters = [];
-            for(let value in jsonBody){
+            let keyCount = 0;
+            
+            for(let key in jsonBody){
 
                 //Handle value of type array
-                if(Array.isArray(jsonBody[value])){
-                    jsonBody[value].forEach( async (contents) => {
-                        await setParameters(super_key,contents);
-                    });
+                if(Array.isArray(jsonBody[key])){
+                    await Promise.all(jsonBody[key].map( async (contents) => {
+                        const edge = await setParameters(super_key,key,contents);
+                        if(edge){
+                            parameters.push("Array"+keyCount++);
+                            parameters.push(edge);
+                            return parameters;
+                        }else
+                            console.log("no Edge"); 
+                    }));
+
                     continue;
 
-                  //Handle value of type object  
-                } else if(typeof(jsonBody[value]) === 'object'){
-                    await setParameters(super_key,jsonBody[value]);
+                //Handle value of type object  
+                } else if(typeof(jsonBody[key]) === 'object'){
+
+                    //storing edge reference
+                    const edge = await setParameters(super_key,key,jsonBody[key]);
+                    parameters.push("Key"+keyCount++);
+                    parameters.push(edge);
                     continue;
                 }
 
                 //parent data contents
-                parameters.push(value);
-                parameters.push(jsonBody[value]);
+                parameters.push(key);
+                parameters.push(jsonBody[key]);
             }
+
+            console.log(parameters);
 
             //set parent id
             client.hmset(super_key,parameters, (err, res) => {
@@ -145,12 +176,18 @@ const createPlan = async (body) => {
                     console.log("Super Key",err);
                 }
             });
+
+            const unique_key = uuid();
+
+            client.set(unique_key,super_key);
+
+            return success("Your unique key : "+ unique_key, 201);
         }
 
-        return success("Working well!", 201);
+        
     }
 
-    return error("Redis client not working", 401)
+    return error("Server error. Please try again after some time", 401)
 
 };
 
@@ -205,34 +242,62 @@ const deletePlan = async(id) => {
     return error("Id must be provided",401);
 }
 
-const setParameters = async (superkey, data) => {
+const buildResponse = async(jsonBody) => {
+
+    const res = {};
+
+    for(key in jsonBody){
+
+        if(key.includes("Key")){
+            
+        }
+
+        if(key.includes("Array")){
+
+        }
+
+        res[key] = jsonBody[key];
+    }
+
+    return res;
+}
+
+const setParameters = async (superkey, key, data) => {
     if(typeof data === 'object'){
         let subkey = "";
         if(superkey)
-            subkey = superkey +"_"+ data['objectId'] +"_"+ data['objectType'];
+            subkey = superkey +"_"+ data['objectId'] +"_"+ data['objectType'] + "-" + key;
         else
-            subkey = data['objectId'] +"_"+ data['objectType'];
+            subkey = data['objectId'] +"_"+ data['objectType'] + "-" + key;
         
         const parameters = [];
-        for(let value in data){
+        let keyCount = 0;
+        for(let key1 in data){
 
             //For nested objects
-            if(typeof(data[value]) == 'object'){
-                await setParameters(subkey,data[value]);
+            if(typeof(data[key1]) == 'object'){
+
+                //storing edge reference
+                keyCount++;
+                const edge = await setParameters(subkey,key1,data[key1]);
+                parameters.push("Key"+keyCount);
+                parameters.push(edge);
                 continue;
             }
 
-            parameters.push(value);
-            parameters.push(data[value]);
+            parameters.push(key1);
+            parameters.push(data[key1]);
         }
 
         const client = await getRedisClient();
-        console.log("Parameters",parameters);
+        // console.log("Parameters",parameters);
         await client.hmset(subkey,parameters, (err,res) => {
             if(err){
                 console.log("Child Key ",err);
             }
         });
+
+        return subkey;
 
     }
 }
