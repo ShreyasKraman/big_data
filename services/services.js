@@ -15,21 +15,13 @@ const getById = async(id) => {
 
     if(client){
 
-        let getAsync = promisify(client.get).bind(client);
 
-        const json_id = await getAsync(id.trim());
+        let getAsync = promisify(client.hgetall).bind(client);
 
-        console.log(id,json_id);
+        const res = await getAsync(id);
 
-        if(json_id){
-
-            getAsync = promisify(client.hgetall).bind(client);
-
-            const res = await getAsync(json_id);
-
-            if(res){
-                return success(res, 200);
-            }
+        if(res){
+            return success(res, 200);
         }
 
         return success("No corresponding values found", 204);
@@ -44,7 +36,7 @@ const ifNoneMatch = async (etag,id) => {
 
     const client = await getRedisClient()
 
-    const getAsync = promisify(client.get).bind(client);
+    let getAsync = promisify(client.get).bind(client);
 
     //1. Check if Etag is associated with id sent
     const etagId = await getAsync(id+"_ETAG");
@@ -56,44 +48,39 @@ const ifNoneMatch = async (etag,id) => {
     }
 
     //3. If etag is not associated, then associate the etag with this value.
-    
-    //3. a. For first request
-    if(etag === '*'){
-        res = getById(id);
+
+    const json_id = await getAsync(id.trim());
+    let result = {};
+    if(json_id){
+        res = await getById(json_id);
         if(res.success){
-            return await buildResponse(res.body);
-        }
-        return error("No data found",204);
-    }
+            // console.log(res);
+            result = await buildResponse(res.body);
 
-    //3. b. For subsequent request, store etag with id's value
-    res = await getById(id);
+            //3. a. For first request
+            if(etag === '*'){
 
-    // console.log(res);
-
-    if(res.status === 200){
-        const parameters = [];
-        const body = res.body;
-        for (let values in body){
-            parameters.push(values);
-            parameters.push(body[values]);
-        }
-
-        // console.log("etag params",parameters);
-        //set etag
-        await client.set(id+"_ETAG",etag);
-        //set values to etag
-        await client.hmset(etag,parameters, (err,res) => {
-            if(err){
-                console.log("ETAG ERROR",err);
+                if(result)
+                    return success(result,200);
+                
+                return error("No data found",204);
             }
-        });
 
-        return success(body,200);
+            //3. b. For subsequent request, store etag with id's value
+
+            //set etag
+            await client.set(id+"_ETAG",etag);
+            
+            //set values to etag
+            await client.set(etag,JSON.stringify(result));
+
+            return success(result,200);
+
+        }
     }
 
     //return error or no values found for the id
-    return res;
+    return error("No values found",204);
 
 }
 
@@ -102,9 +89,9 @@ const ifMatch = async (etag) => {
     if(etag){
         const client = await getRedisClient();
 
-        const getAsync = promisify(client.hgetall).bind(client);
+        const getAsync = promisify(client.get).bind(client);
 
-        const res = await getAsync(etag);
+        const res = JSON.parse(await getAsync(etag));
 
         if(res){
 
@@ -210,6 +197,71 @@ const updatePlan = async(id,body) => {
 
 };
 
+const patchPlan = async(body) => {
+
+    if(body){
+
+        await patchAll(body, '');
+
+    }
+
+};
+
+const patchAll = async(body,superkey) => {
+
+    let parameters = [];
+    let search_key = '';
+    for(let key in body){
+
+        if(typeof body[key] === 'object'){
+            let res = await patchAll(body[key],key);
+
+            if(res.error){
+                return error('Patch failed',400);
+            }
+            continue;
+        }
+
+
+        if(key == 'objectId' || key == 'objectType')
+            search_key = data['objectId'] +"_"+ data['objectType'] + "-" + superkey; 
+        else
+            parameters.push(key);
+            parameters.push(body[key]);
+    }
+
+    if(parameters.length !== 0){
+
+        const client = getRedisClient();
+
+        if(search_key.length === 0)
+            return error("Search key not found",401);
+
+        await client.keys('*', (err,keys)=> {
+
+            if(err)
+                return error('Error fetching keys',401);
+
+            for(let i=0;i<keys.length;i++){
+
+                let index = keys[i].indexOf(search_key);
+
+                if(index !== -1 && (index + search_key.length()) === keys[i].length()){
+
+                    await client.hmset(keys[i],parameters);
+                    return success("Keys updated",200);
+                }
+
+            }
+
+        });
+
+    }
+
+    return error("Patch failed",401);
+
+}
+
 
 
 const deletePlan = async(id) => {
@@ -245,19 +297,41 @@ const deletePlan = async(id) => {
 const buildResponse = async(jsonBody) => {
 
     const res = {};
+    const jsonArray = [];
+    let arrayKey = '';
+    for(let key in jsonBody){
 
-    for(key in jsonBody){
+        if(key.includes('Key') || key.includes('Array')){
+        
+            const response = await getById(jsonBody[key]);
+            if(response.success){
+                const body = response.body;
 
-        if(key.includes("Key")){
-            
+                //key of response
+                const splitArray = jsonBody[key].split('-');
+                const len = splitArray.length;
+                console.log(jsonBody[key],splitArray);
+
+                //body of response
+                const result = await buildResponse(body);
+
+                if(key.includes("Key")){
+                    
+                    res[splitArray[len - 1]] = result;
+                }
+
+                if(key.includes("Array")){
+                    arrayKey = splitArray[ len - 1];
+                    jsonArray.push(result);
+                }
+                continue;
+            }
         }
-
-        if(key.includes("Array")){
-
-        }
-
+        // console.log(key,jsonBody[key]);
         res[key] = jsonBody[key];
     }
+    if(jsonArray.length > 0)
+        res[arrayKey] = jsonArray;
 
     return res;
 }
