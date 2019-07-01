@@ -15,6 +15,9 @@ router.post('/plan', restController.postController )
 //make changes to the plan
 router.put('/plan', restController.putController)
 
+//make changes to the plan
+router.patch('/plan', restController.patchController)
+
 //delete plan by id
 router.delete('/plan', restController.deleteController)
 

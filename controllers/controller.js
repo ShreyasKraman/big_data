@@ -84,6 +84,24 @@ const putController = async (req,res) => {
 
 };
 
+const patchController = async (req,res) => {
+    const jsonBody = req.body;
+    const id = req.query.id;
+
+    const result = await services.patchPlan(id,jsonBody);
+
+    if(result.error){
+        res.status(result.status);
+    }
+
+    if(result.success){
+        res.status(result.status);
+    }   
+
+    return res.send(result);
+
+};
+
 const deleteController = async (req,res) => {
     const id = req.query.id;
 
@@ -103,5 +121,6 @@ export default {
     getByIdController,
     postController,
     putController,
+    patchController,
     deleteController,
 };
