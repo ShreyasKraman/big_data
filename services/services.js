@@ -1,6 +1,7 @@
 import { validateJson } from '../utils/validation';
 import { success, error } from '../utils/response';
 import { getRedisClient } from '../dbstore/redis';
+import resources from '../utils/resource';
 import {promisify} from 'util';
 import uuid from 'uuid/v4';
 
@@ -40,7 +41,7 @@ const ifNoneMatch = async (etag,id) => {
 
     //1. Check if Etag is associated with id sent
     const etagId = await getAsync(id+"_ETAG");
-    let res = await compare(etag,etagId);
+    let res = await resources.compare(etag,etagId);
 
     //2. If yes send 304, asking user to accpet request from caching
     if(res){
@@ -56,7 +57,7 @@ const ifNoneMatch = async (etag,id) => {
         if(res.success){
             
             //build json response
-            result = await buildResponse(res.body);
+            result = await resources.buildResponse(res.body);
 
             //3. a. For first request
             if(etag === '*'){
@@ -130,7 +131,7 @@ const createPlan = async (body) => {
                 //Handle value of type array
                 if(Array.isArray(jsonBody[key])){
                     await Promise.all(jsonBody[key].map( async (contents) => {
-                        const edge = await setParameters("",key,contents);
+                        const edge = await resources.setParameters("",key,contents);
                         if(edge){
                             parameters.push("Array"+keyCount++);
                             parameters.push(edge);
@@ -145,7 +146,7 @@ const createPlan = async (body) => {
                 } else if(typeof(jsonBody[key]) === 'object'){
 
                     //storing edge reference
-                    const edge = await setParameters(super_key,key,jsonBody[key]);
+                    const edge = await resources.setParameters("",key,jsonBody[key]);
                     parameters.push("Key"+keyCount++);
                     parameters.push(edge);
                     continue;
@@ -155,8 +156,6 @@ const createPlan = async (body) => {
                 parameters.push(key);
                 parameters.push(jsonBody[key]);
             }
-
-            console.log(parameters);
 
             //set parent id
             client.hmset(super_key,parameters, (err, res) => {
@@ -182,9 +181,9 @@ const updatePlan = async(id,body) => {
     if(id){
         if(body){
 
-            await setParameters("",body);
+            await resources.setParameters("",body);
 
-            await deletePlanETAG(id);            
+            await resources.deletePlanETAG(id);            
 
             return("Value updated successfully");
 
@@ -200,10 +199,10 @@ const patchPlan = async(id,body) => {
 
     if(body && id){
         console.log("Id",id);
-        const res = await patchAll(body, '',id);
-        if(res.success)
-            await deletePlanETAG(id);
-
+        const res = await resources.patchAll(body, '',id);
+        if(res.success){
+            await resources.deletePlanETAG(id);
+        }
         return res;
 
     }
@@ -212,111 +211,6 @@ const patchPlan = async(id,body) => {
 
 };
 
-const patchAll = async(body,superkey,id) => {
-
-    let search_key = '';
-    let res = {};
-
-    //Retrive match key from the body
-    for(let key in body){
-
-        if(typeof body[key] === 'object'){
-            res = await patchAll(body[key],key,id);
-            if(res.error){
-                return res;
-            }
-            continue;
-        }
-
-        if(key == 'objectId' || key == 'objectType')
-            search_key = body['objectId'] +"_"+ body['objectType'] + "-" + superkey; 
-    }
-
-    //Get object from redis
-    if(search_key.length !== 0){
-        
-        const client = await getRedisClient();
-        let getAsync = promisify(client.get).bind(client);
-        let root = await getAsync(id);
-
-        let res = await retrieveKey(root,search_key);
-
-        if(res.length === 0)
-            return error("No data found for patch request",401);
-
-        getAsync = promisify(client.hgetall).bind(client);
-
-        const data = await getAsync(res);
-
-        if(data.length === 0)
-            res = error("No data found for corresponding patch request",401);
-
-        let flag = false;
-
-        //modify data in object
-        for(let key in body){
-
-            if(!(key in data)){
-                data[key] = body[key]
-                flag = true;
-            }
-
-            if(body[key] !== data[key]){
-                data[key] == body[key];
-                flag = true;
-            }
-
-        }
-
-
-        if(!flag)
-            res = success("No data modified",304);
-        else{
-            let parameters = [];
-            for(let key in data){
-
-                if(key === 'objectId' || key === 'objectType')
-                    continue;
-
-                parameters.push(key);
-                parameters.push(data[key]);
-
-            }
-
-            await client.hmset(search_key,parameters, (err,res)=> {
-
-            })
-            res = success("Data modified",200);
-
-        }
-        
-    }
-
-    return res;
-
-}
-
-const retrieveKey = async (id,matchKey) => {
-    let res = '';
-    if(id.length !== 0 && matchKey.length !== 0){
-        const client = getRedisClient();
-        const getAsync = promisify(client.hgetall).bind(client);
-        const data = await getAsync(id);
-        console.log(id,matchKey);
-        for(let key in data){
-            if(key.includes("Key") || key.includes("Array")){
-                if(data[key] === matchKey){
-                    return data[key];
-                }
-                else
-                    res = retrieveKey(data[key],matchKey);
-            }
-        }
-    }
-
-    return res;
-
-}
 
 
 
@@ -337,7 +231,7 @@ const deletePlan = async(id) => {
             console.log(parameters);
             client.HDEL(id,parameters);
 
-            await deletePlanETAG(id);
+            await resources.deletePlanETAG(id);
 
             return success("Values Deleted",200);
 
@@ -348,140 +242,6 @@ const deletePlan = async(id) => {
     }
 
     return error("Id must be provided",401);
-}
-
-const buildResponse = async(jsonBody) => {
-
-    const res = {};
-    const jsonArray = [];
-    let arrayKey = '';
-    for(let key in jsonBody){
-
-        if(key.includes('Key') || key.includes('Array')){
-        
-            const response = await getById(jsonBody[key]);
-            if(response.success){
-                const body = response.body;
-
-                //key of response
-                const splitArray = jsonBody[key].split('-');
-                const len = splitArray.length;
-
-                //body of response
-                const result = await buildResponse(body);
-
-                //for json object
-                if(key.includes("Key")){
-                    
-                    res[splitArray[len - 1]] = result;
-                }
-
-                //for array of objects
-                if(key.includes("Array")){
-                    arrayKey = splitArray[ len - 1];
-                    jsonArray.push(result);
-                }
-                continue;
-            }
-        }
-        // console.log(key,jsonBody[key]);
-        res[key] = jsonBody[key];
-    }
-    if(jsonArray.length > 0)
-        res[arrayKey] = jsonArray;
-
-    return res;
-}
-
-const setParameters = async (superkey, key, data) => {
-    if(typeof data === 'object'){
-        let subkey = "";
-        if(superkey)
-            subkey = superkey +"_"+ data['objectId'] +"_"+ data['objectType'] + "-" + key;
-        else
-            subkey = data['objectId'] +"_"+ data['objectType'] + "-" + key;
-        
-        const parameters = [];
-        let keyCount = 0;
-        for(let key1 in data){
-
-            //For nested objects
-            if(typeof(data[key1]) == 'object'){
-
-                //storing edge reference
-                keyCount++;
-                const edge = await setParameters("",key1,data[key1]);
-                parameters.push("Key"+keyCount);
-                parameters.push(edge);
-                continue;
-            }
-
-            parameters.push(key1);
-            parameters.push(data[key1]);
-        }
-
-        const client = await getRedisClient();
-        // console.log("Parameters",parameters);
-        await client.hmset(subkey,parameters, (err,res) => {
-            if(err){
-                console.log("Child Key ",err);
-            }
-        });
-
-        return subkey;
-
-    }
-}
-
-const deletePlanETAG = async(id) => {
-
-    if(id){
-        const client = await getRedisClient();
-
-        let res = await getById(id);
-
-        if(res.success){
-
-            //GET Corresponding etag
-            let getAsync = promisify(client.get).bind(client);
-            const etagid = await getAsync(id+"_ETAG");
-
-            console.log(etagid);
-
-            if(etagid){
-
-                //delete etag reference
-                client.del(id+"_ETAG");
-
-                getAsync = promisify(client.hgetall).bind(client);
-                res = await getAsync(etagid);
-                
-                console.log("Etagid",res);
-                const parameters = [];
-                for(let values in res){
-                    //delete corresponding values of etag
-                    parameters.push(values);
-                    parameters.push(res[values]);
-                }
-                client.HDEL(etagid,parameters);
-            }
-
-            return success("Values deleted",200);
-
-        }
-
-        return error("Error",401);
-
-    }
-
-    return error("Id must be provided",401);
-
-};
-
-const compare = (id, etag) => {
-
-    return id === etag;
-
 }
 
 module.exports = {
