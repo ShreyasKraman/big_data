@@ -130,8 +130,20 @@ const patchAll = async(body,superkey,id) => {
 
     //Retrive match key from the body
     for(let key in body){
+        //Handlevalues of type Array
+        if(Array.isArray(body[key])){
+            await Promise.all(body[key].map( async (contents) => {
+                const edge = await patchA(contents,key,id);
+                if(edge){
+                    return res;
+                }else
+                    console.log("no Edge"); 
+            }));
 
-        if(typeof body[key] === 'object'){
+            continue;
+
+        //Handle value of type object  
+        }else if(typeof body[key] === 'object'){
             res = await patchAll(body[key],key,id);
             if(res.error){
                 return res;
