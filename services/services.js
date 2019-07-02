@@ -3,14 +3,61 @@ import { success, error } from '../utils/response';
 import { getRedisClient } from '../dbstore/redis';
 import resources from '../utils/resource';
 import {promisify} from 'util';
+import {secret_key,client_id} from '../utils/keys';
+
+import jwt from 'jsonwebtoken';
+
 import uuid from 'uuid/v4';
 
+
+const register = async(client_type,redirect_url) => {
+    let res = {};
+    if(secret_key.length!== 0 && client_id.length!==0){
+        
+        if(client_type === 'confidential')
+            res = {
+                client_id,
+                secret_key,
+                redirect_url
+            }
+        else
+            res = {client_id,redirect_url};
+
+        return success(res,200);
+        
+    }
+    return error("Failed to register",403);
+}
+
+const authorize = async (body) => {
+    if(body){
+        const client_id = body["client_id"];
+        let token = jwt.sign({client_id},secret_key,{expiresIn:'1m'});
+        const redirect_url = body.redirect_uri + "?" + body.response_type + "=" + token + "&state="+body.state;
+        return success({redirect_url},302);
+    }
+
+    return error("Not authorized",403);
+
+}
+
+const verifyToken = async (token) => {
+    if(token){
+
+        let client_id_decoded = jwt.verify(token,secret_key);
+        if(client_id_decoded === client_id)
+            return success("Verified",200);
+        else
+            return error("forbidden",403);
+
+    }
+}
 
 const getAll = async() => {
 
 };
 
-const getById = async(id) => {
+const getById = async (id) => {
 
     const client = await getRedisClient();
 
@@ -57,7 +104,7 @@ const ifNoneMatch = async (etag,id) => {
         if(res.success){
             
             //build json response
-            result = await resources.buildResponse(res.body);
+            result = await buildResponse(res.body);
 
             //3. a. For first request
             if(etag === '*'){
@@ -244,6 +291,51 @@ const deletePlan = async(id) => {
     return error("Id must be provided",401);
 }
 
+
+//Build JSON response
+const buildResponse = async(jsonBody) => {
+
+    const res = {};
+    const jsonArray = [];
+    let arrayKey = '';
+    for(let key in jsonBody){
+
+        if(key.includes('Key') || key.includes('Array')){
+        
+            const response = await getById(jsonBody[key]);
+            if(response.success){
+                const body = response.body;
+
+                //key of response
+                const splitArray = jsonBody[key].split('-');
+                const len = splitArray.length;
+
+                //body of response
+                const result = await buildResponse(body);
+
+                //for json object
+                if(key.includes("Key")){
+                    
+                    res[splitArray[len - 1]] = result;
+                }
+
+                //for array of objects
+                if(key.includes("Array")){
+                    arrayKey = splitArray[ len - 1];
+                    jsonArray.push(result);
+                }
+                continue;
+            }
+        }
+        // console.log(key,jsonBody[key]);
+        res[key] = jsonBody[key];
+    }
+    if(jsonArray.length > 0)
+        res[arrayKey] = jsonArray;
+
+    return res;
+}
+
 module.exports = {
     getAll,
     getById,
@@ -253,4 +345,7 @@ module.exports = {
     deletePlan,
     ifMatch,
     ifNoneMatch,
+    register,
+    authorize,
+    verifyToken
 }

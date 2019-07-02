@@ -1,4 +1,7 @@
 import { getRedisClient } from '../dbstore/redis';
+import {promisify} from 'util';
+import { success, error } from './response';
+import services from '../services/services';
 
 //Compare two ids
 const compare = (id, id2) => {
@@ -7,54 +10,12 @@ const compare = (id, id2) => {
 
 }
 
-//Build JSON response
-const buildResponse = async(jsonBody) => {
-
-    const res = {};
-    const jsonArray = [];
-    let arrayKey = '';
-    for(let key in jsonBody){
-
-        if(key.includes('Key') || key.includes('Array')){
-        
-            const response = await getById(jsonBody[key]);
-            if(response.success){
-                const body = response.body;
-
-                //key of response
-                const splitArray = jsonBody[key].split('-');
-                const len = splitArray.length;
-
-                //body of response
-                const result = await buildResponse(body);
-
-                //for json object
-                if(key.includes("Key")){
-                    
-                    res[splitArray[len - 1]] = result;
-                }
-
-                //for array of objects
-                if(key.includes("Array")){
-                    arrayKey = splitArray[ len - 1];
-                    jsonArray.push(result);
-                }
-                continue;
-            }
-        }
-        // console.log(key,jsonBody[key]);
-        res[key] = jsonBody[key];
-    }
-    if(jsonArray.length > 0)
-        res[arrayKey] = jsonArray;
-
-    return res;
-}
 
 
 
 //Get Node data from given id
 const retrieveNodeObject = async (id,matchKey) => {
+    let res = {};
     if(id.length !== 0 && matchKey.length !== 0){
 
         const client = getRedisClient();
@@ -66,7 +27,7 @@ const retrieveNodeObject = async (id,matchKey) => {
         }else{
             for(let key in data){
                 if(key.includes("Key") || key.includes("Array")){
-                    let res = retrieveNodeObject(data[key],matchKey);
+                    res = retrieveNodeObject(data[key],matchKey);
                     if(res.length !== 0)
                         return res;
                 }
@@ -133,7 +94,7 @@ const patchAll = async(body,superkey,id) => {
         //Handlevalues of type Array
         if(Array.isArray(body[key])){
             await Promise.all(body[key].map( async (contents) => {
-                const edge = await patchA(contents,key,id);
+                const edge = await patchAll(contents,key,id);
                 if(edge){
                     return res;
                 }else
@@ -151,8 +112,12 @@ const patchAll = async(body,superkey,id) => {
             continue;
         }
 
-        if(key == 'objectId' || key == 'objectType')
-            search_key = body['objectId'] +"_"+ body['objectType'] + "-" + superkey; 
+        if(key == 'objectId' || key == 'objectType'){
+            if(superkey.length !== 0)
+                search_key = body['objectId'] +"_"+ body['objectType'] + "-" + superkey; 
+            else
+                search_key = body['objectId'] +"_"+ body['objectType']
+        }
     }
 
     //Get object from redis
@@ -264,7 +229,6 @@ const deletePlanETAG = async(id) => {
 
 module.exports = {
     compare,
-    buildResponse,
     retrieveNodeObject,
     setParameters,
     patchAll,

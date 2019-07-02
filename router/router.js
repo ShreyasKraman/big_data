@@ -6,8 +6,18 @@ const router = express.Router();
 
 //Get all plans
 // router.get('/plan', restController.getAllController)
+
+//Register
+router.get('/register', restController.registerController)
+
+//Authorize
+router.get('/auth', restController.authorizeController)
+
+//Token
+router.get('/token',restController.tokenController)
+
 //get plan by id
-router.get('/plan', restController.getByIdController)
+router.get('/plan',  restController.getByIdController)
 
 //post plan
 router.post('/plan', restController.postController )
