@@ -8,6 +8,7 @@ import {secret_key,client_id} from '../utils/keys';
 import jwt from 'jsonwebtoken';
 
 import uuid from 'uuid/v4';
+import { create } from 'domain';
 
 
 const register = async(client_type,redirect_url) => {
@@ -32,7 +33,7 @@ const register = async(client_type,redirect_url) => {
 const authorize = async (body) => {
     if(body){
         const client_id = body["client_id"];
-        let token = jwt.sign({client_id},secret_key,{expiresIn:'1m'});
+        let token = await jwt.sign({client_id},secret_key);
         const redirect_url = body.redirect_uri + "?" + body.response_type + "=" + token + "&state="+body.state;
         return success({redirect_url},302);
     }
@@ -43,14 +44,16 @@ const authorize = async (body) => {
 
 const verifyToken = async (token) => {
     if(token){
-
-        let client_id_decoded = jwt.verify(token,secret_key);
-        if(client_id_decoded === client_id)
-            return success("Verified",200);
-        else
-            return error("forbidden",403);
-
+        try{
+            await jwt.verify(token,secret_key);
+        }catch(err){
+            return error(err,401);
+        }
+        
+        return success("Verified",200);
     }
+
+    return error("No Token",403);
 }
 
 const getAll = async() => {
@@ -105,6 +108,8 @@ const ifNoneMatch = async (etag,id) => {
             
             //build json response
             result = await buildResponse(res.body);
+
+            console.log("in here");
 
             //3. a. For first request
             if(etag === '*'){
@@ -169,8 +174,9 @@ const createPlan = async (body) => {
         
         if(typeof(jsonBody) == "object"){
 
-            let super_key = jsonBody["objectId"] + "_" + jsonBody["objectType"];
+            let super_key = jsonBody["objectType"] + "__" + jsonBody['objectId'];
             let parameters = [];
+            let arrayParameters = [];
             let keyCount = 0;
             
             for(let key in jsonBody){
@@ -180,12 +186,23 @@ const createPlan = async (body) => {
                     await Promise.all(jsonBody[key].map( async (contents) => {
                         const edge = await resources.setParameters("",key,contents);
                         if(edge){
-                            parameters.push("Array"+keyCount++);
-                            parameters.push(edge);
+                            // parameters.push("Array"+keyCount++);
+                            // parameters.push(edge);
+                            arrayParameters.push(edge);
                             return parameters;
                         }else
                             console.log("no Edge"); 
                     }));
+
+                    if(arrayParameters.length != 0){
+                        const uuid_key = uuid();
+                        const newKey = uuid_key + "-" + key; 
+                        const result = await client.rpush(newKey, ...arrayParameters);
+
+                        parameters.push(key);
+                        parameters.push(newKey);
+                        console.log("Array push",result);
+                    }
 
                     continue;
 
@@ -194,7 +211,7 @@ const createPlan = async (body) => {
 
                     //storing edge reference
                     const edge = await resources.setParameters("",key,jsonBody[key]);
-                    parameters.push("Key"+keyCount++);
+                    parameters.push(key);
                     parameters.push(edge);
                     continue;
                 }
@@ -223,14 +240,96 @@ const createPlan = async (body) => {
 
 };
 
-const updatePlan = async(id,body) => {
+const updatePlan = async(id,jsonBody) => {
 
     if(id){
-        if(body){
+        if(jsonBody){
 
-            await resources.setParameters("",body);
+            // await createPlan(body);
 
-            await resources.deletePlanETAG(id);            
+            const response = validateJson(jsonBody);
+    
+            if(response.error){
+                return error(response.message, 401);
+            }
+
+            const client = await getRedisClient();
+
+            if(client){
+        
+                if(typeof(jsonBody) == "object"){
+        
+                    let super_key = jsonBody["objectType"] + "__" + jsonBody['objectId'];
+                    let parameters = [];
+
+                    for(let key in jsonBody){
+
+                        //Handle value of type array
+                        if(Array.isArray(jsonBody[key])){
+
+                            await Promise.all(jsonBody[key].map( async (contents) => {
+
+                                const key_to_search = contents["objectType"] + "__" + contents['objectId'] + "-" + key;
+
+                                console.log("Key to search",key_to_search);
+
+                                let response = await getById(key_to_search);
+
+                                if(response.status === 204){
+                                    const edge = await resources.setParameters("",key,contents);
+                                    if(edge){
+                                        parameters.push("Array"+keyCount++);
+                                        parameters.push(edge);
+                                        return parameters;
+                                    }else
+                                        console.log("no Edge"); 
+
+                                    //push the new element to array;
+                                    let result = getById(super_key);
+
+                                    if(result.status === 200){
+                                        const body = result.body;
+                                        const list_key = body[key];
+
+                                        //push node to list
+                                        result = await client.rpush(list_key, edge);
+
+                                        console.log("Node push",result);
+                                    }else{
+                                        console.log("Node push failed");
+                                    }
+                                    
+                                }else if(response.status === 200){
+
+                                    const result = await resources.updateContents(response.body,contents);
+                                    if(result.status === 201){
+
+                                    }
+                                }
+
+                            }));
+        
+                            continue;
+        
+                        //Handle value of type object  
+                        } else if(typeof(jsonBody[key]) === 'object'){
+        
+                            // //storing edge reference
+                            // const edge = await resources.setParameters("",key,jsonBody[key]);
+                            // parameters.push("Key"+keyCount++);
+                            // parameters.push(edge);
+                            // continue;
+                        }
+        
+                        //parent data contents
+                        // parameters.push(key);
+                        // parameters.push(jsonBody[key]);
+                    }
+                }
+            }
+
+
+            // await resources.deletePlanETAG(id);            
 
             return("Value updated successfully");
 
@@ -245,7 +344,6 @@ const updatePlan = async(id,body) => {
 const patchPlan = async(id,body) => {
 
     if(body && id){
-        console.log("Id",id);
         const res = await resources.patchAll(body, '',id);
         if(res.success){
             await resources.deletePlanETAG(id);
@@ -257,9 +355,6 @@ const patchPlan = async(id,body) => {
     return error("No body",401);
 
 };
-
-
-
 
 const deletePlan = async(id) => {
     if (id){
@@ -298,11 +393,21 @@ const buildResponse = async(jsonBody) => {
     const res = {};
     const jsonArray = [];
     let arrayKey = '';
+
+    const client = getRedisClient();
+
     for(let key in jsonBody){
 
-        if(key.includes('Key') || key.includes('Array')){
-        
+        const split = jsonBody[key].split('-');
+        //add key values to res if no object or array found
+        if(split[split.length - 1] !== key){
+            res[key] = jsonBody[key];
+            continue;
+        }
+
+        try{
             const response = await getById(jsonBody[key]);
+
             if(response.success){
                 const body = response.body;
 
@@ -314,21 +419,35 @@ const buildResponse = async(jsonBody) => {
                 const result = await buildResponse(body);
 
                 //for json object
-                if(key.includes("Key")){
                     
-                    res[splitArray[len - 1]] = result;
-                }
+                res[key] = result;
 
-                //for array of objects
-                if(key.includes("Array")){
-                    arrayKey = splitArray[ len - 1];
-                    jsonArray.push(result);
-                }
                 continue;
             }
+
+        }catch(e){
+            if(e.code === 'WRONGTYPE'){
+                arrayKey = key;
+                const getAsync = promisify(client.lrange).bind(client);
+
+                const items = await getAsync(jsonBody[key],0,-1);
+
+                await Promise.all(items.map( async (element) => {
+                    const response = await getById(element);
+                    // console.log("Id response",response);
+                    if(response.success){
+                        const body = response.body;
+                        //body of response
+                        const result = await buildResponse(body);
+                        jsonArray.push(result);
+                    }
+                }));
+
+            }else{
+                return error("Error while parsing",401);
+            }
         }
-        // console.log(key,jsonBody[key]);
-        res[key] = jsonBody[key];
+
     }
     if(jsonArray.length > 0)
         res[arrayKey] = jsonArray;

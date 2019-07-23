@@ -10,9 +10,6 @@ const compare = (id, id2) => {
 
 }
 
-
-
-
 //Get Node data from given id
 const retrieveNodeObject = async (id,matchKey) => {
     let res = {};
@@ -39,15 +36,14 @@ const retrieveNodeObject = async (id,matchKey) => {
 
 }
 
-
 //Store nodes and their data
 const setParameters = async (superkey, key, data) => {
     if(typeof data === 'object'){
         let subkey = "";
         if(superkey)
-            subkey = superkey +"_"+ data['objectId'] +"_"+ data['objectType'] + "-" + key;
+            subkey = superkey +"__"+ data["objectType"] + "__" + data['objectId'] + "-" + key;
         else
-            subkey = data['objectId'] +"_"+ data['objectType'] + "-" + key;
+            subkey = data["objectType"] + "__" + data['objectId'] + "-" + key;
         
         const parameters = [];
         let keyCount = 0;
@@ -59,7 +55,7 @@ const setParameters = async (superkey, key, data) => {
                 //storing edge reference
                 keyCount++;
                 const edge = await setParameters("",key1,data[key1]);
-                parameters.push("Key"+keyCount);
+                parameters.push(key1);
                 parameters.push(edge);
                 continue;
             }
@@ -81,7 +77,37 @@ const setParameters = async (superkey, key, data) => {
     }
 }
 
+const updateContents = async(contents, newContents) =>{
 
+    let res = {};
+    for(let key in newContents){
+
+        if(typeof newContents[key] === 'object'){
+
+            const search_key = data["objectType"] + "__" + data['objectId'] + "-" + key;
+
+            if(contents[key] === search_key){
+                const result = await compareAndUpdate(contents[key],newContents[key]);
+
+            }else{
+                const edge = await setParameters("",key,newContents[key]);
+
+            }
+
+        }
+
+    }
+}
+
+const compareAndUpdate = async(items1,items2) => {
+    for(keys in items2){
+
+        if(typeof items2[keys] === 'object' ){
+            
+        }
+
+    }
+}
 
 //Recursive function for patch
 const patchAll = async(body,superkey,id) => {
@@ -94,7 +120,12 @@ const patchAll = async(body,superkey,id) => {
         //Handlevalues of type Array
         if(Array.isArray(body[key])){
             await Promise.all(body[key].map( async (contents) => {
-                const edge = await patchAll(contents,key,id);
+                const result = await patchAll(contents,key,id);
+
+                if(result.statusCode === 201){
+                    let arrayKey = result.body;
+                    console.log(arrayKey);
+                }
                 if(edge){
                     return res;
                 }else
@@ -112,6 +143,7 @@ const patchAll = async(body,superkey,id) => {
             continue;
         }
 
+        //parent data contents
         if(key == 'objectId' || key == 'objectType'){
             if(superkey.length !== 0)
                 search_key = body['objectId'] +"_"+ body['objectType'] + "-" + superkey; 
@@ -132,8 +164,10 @@ const patchAll = async(body,superkey,id) => {
         if(res.length === 0)
             return error("No data found for patch request",401);
 
-        if(data.length === 0)
-            res = error("No data found for corresponding patch request",401);
+        let newData = false;
+        if(data.length === 0){
+            newData = true;
+        }
 
         let flag = false;
 
@@ -170,7 +204,10 @@ const patchAll = async(body,superkey,id) => {
             await client.hmset(search_key,parameters, (err,res)=> {
 
             })
-            res = success("Data modified",200);
+            if(newData)
+                res = success(search_key,201);
+            else
+                res = success("Data Modified",200);
         }
         
     }
@@ -178,7 +215,6 @@ const patchAll = async(body,superkey,id) => {
     return res;
 
 }
-
 
 //Delete etag
 const deletePlanETAG = async(id) => {
@@ -226,11 +262,11 @@ const deletePlanETAG = async(id) => {
 
 };
 
-
 module.exports = {
     compare,
     retrieveNodeObject,
     setParameters,
+    updateContents,
     patchAll,
     deletePlanETAG
 }

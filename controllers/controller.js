@@ -1,5 +1,5 @@
 import services from '../services/services';
-import { verify } from 'crypto';
+import {success,error} from '../utils/response';
 
 const registerController = async (req, res) => {
     const client_type = req.query.client_type;
@@ -45,23 +45,10 @@ const getAllController = async (req,res) => {
 
 const getByIdController = async (req,res) => {
 
-    //Check for token
-    const bearerHeader = req.headers['Authorization'];
-    console.log(bearerHeader);
+    let verify = await verifyRequest(req);
 
-    if(typeof bearerHeader === 'undefined')
+    if(typeof verify.error !== 'undefined')
         res.status(403).send({error:true,message:'Unauthorized'});
-    
-    const bearer = bearerHeader.split(' ');
-    const token = bearer[1];
-    req.token = token;
-
-
-    //Verify token
-    let tokenResult = await services.verifyToken(req.token);
-
-    if(tokenResult.error)
-        res.status(tokenResult.status).send(tokenResult.body);
 
     const id = req.query.id;
 
@@ -109,6 +96,12 @@ const getByIdController = async (req,res) => {
 
 const postController = async (req,res) => {
 
+    let verify = await verifyRequest(req);
+    
+    if(typeof verify.error !== 'undefined'){
+        res.status(403).send({error:true,message:'Unauthorized'});
+    }
+    
     const jsonBody = req.body;
     const result = await services.createPlan(jsonBody);
 
@@ -124,6 +117,13 @@ const postController = async (req,res) => {
 };
 
 const putController = async (req,res) => {
+
+
+    let verify = await verifyRequest(req);
+
+    if(verify.error)
+        res.status(403).send({error:true,message:'Unauthorized'});
+
     const jsonBody = req.body;
     const id = req.query.id;
 
@@ -142,6 +142,12 @@ const putController = async (req,res) => {
 };
 
 const patchController = async (req,res) => {
+
+    let verify = await verifyRequest(req);
+
+    if(verify.error)
+        res.status(403).send({error:true,message:'Unauthorized'});
+
     const jsonBody = req.body;
     const id = req.query.id;
 
@@ -160,6 +166,12 @@ const patchController = async (req,res) => {
 };
 
 const deleteController = async (req,res) => {
+
+    let verify = await verifyRequest(req);
+
+    if(verify.error)
+        res.status(403).send({error:true,message:'Unauthorized'});
+
     const id = req.query.id;
 
     const result = await services.deletePlan(id);
@@ -173,6 +185,24 @@ const deleteController = async (req,res) => {
     res.send(result);
 };
 
+const verifyRequest = async (req) => {
+
+    //Check for token
+    const bearerHeader = req.headers['authorization'];
+
+    if(typeof bearerHeader === 'undefined')
+        return error("Unauthorized",403);
+
+    
+    const bearer = bearerHeader.split(' ');
+    const token = bearer[1];
+
+    //Verify token
+    let tokenResult = await services.verifyToken(token);
+
+    return tokenResult;
+
+}
 module.exports = {
     registerController,
     tokenController,
