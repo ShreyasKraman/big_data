@@ -77,42 +77,91 @@ const setParameters = async (superkey, key, data) => {
     }
 }
 
-const updateContents = async(contents, newContents) =>{
+const updateContents = async(keys,contents, newContents) =>{
 
     let res = {};
+    const edgeList = [];
+    let isModified = false;
+    const client = getRedisClient();
     for(let key in newContents){
 
         if(typeof newContents[key] === 'object'){
 
-            const search_key = data["objectType"] + "__" + data['objectId'] + "-" + key;
+            const search_key = newContents[key]["objectType"] + "__" + newContents[key]['objectId'] + "-" + key;
+
+            console.log("Inside body",search_key);
+            
 
             if(contents[key] === search_key){
-                const result = await compareAndUpdate(contents[key],newContents[key]);
 
+                const getAsync = promisify(client.hgetall).bind(client);
+
+                const response = getAsync(search_key);
+
+                if(response){
+                    const result = await compareAndUpdate(response,newContents[key]);
+
+                    if(result.isModified){
+                        const body = result.body;
+                        client.hmset(search_key,body, (err,res)=>{
+                            if(err)
+                                error("Unable to update",401);
+                        });
+
+                    }
+                    continue;
+                }
             }else{
                 const edge = await setParameters("",key,newContents[key]);
-
+                contents[key] = edge;
+                isModified = true;
+                continue;
             }
 
         }
 
+        if(newContents[key] !== contents[key]){
+            contents[key] = newContents[key];
+            isModified = true;
+        }
     }
+
+    if(isModified){
+        const super_key = contents["objectType"] + "__" + contents['objectId'] + "-" + keys;
+        client.hmset(super_key,contents, (err,res) => {
+            if(err)
+                return error("Error while modifying",401);
+        });
+
+        return success("Value modified",200);
+    }
+
+    return success("No value modified",200);
 }
 
 const compareAndUpdate = async(items1,items2) => {
-    for(keys in items2){
+    let isModified = false;
+    for(let keys in items2){
 
         if(typeof items2[keys] === 'object' ){
             
         }
 
+        if(items2[keys] !== items1[keys]){
+            items1[keys] = items2[keys];
+            isModified = true;
+        }
+
+    }
+     
+    return {
+        body:items1,
+        isModified
     }
 }
 
-//Recursive function for patch
 const patchAll = async(body,superkey,id) => {
 
-    let search_key = '';
     let res = {};
 
     //Retrive match key from the body
@@ -120,6 +169,9 @@ const patchAll = async(body,superkey,id) => {
         //Handlevalues of type Array
         if(Array.isArray(body[key])){
             await Promise.all(body[key].map( async (contents) => {
+
+
+
                 const result = await patchAll(contents,key,id);
 
                 if(result.statusCode === 201){

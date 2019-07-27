@@ -8,7 +8,6 @@ import {secret_key,client_id} from '../utils/keys';
 import jwt from 'jsonwebtoken';
 
 import uuid from 'uuid/v4';
-import { create } from 'domain';
 
 
 const register = async(client_type,redirect_url) => {
@@ -33,9 +32,10 @@ const register = async(client_type,redirect_url) => {
 const authorize = async (body) => {
     if(body){
         const client_id = body["client_id"];
-        let token = await jwt.sign({client_id},secret_key);
+        let token = await jwt.sign({client_id},secret_key,{expiresIn:'180ms'});
+        const refresh_token = await jwt.sign({uuid()},secret_key);
         const redirect_url = body.redirect_uri + "?" + body.response_type + "=" + token + "&state="+body.state;
-        return success({redirect_url},302);
+        return success({redirect_url,refresh_token},302);
     }
 
     return error("Not authorized",403);
@@ -51,6 +51,28 @@ const verifyToken = async (token) => {
         }
         
         return success("Verified",200);
+    }
+
+    return error("No Token",403);
+}
+
+const generateToken = async (refresh_token) => {
+    if(refresh_token){
+
+        try{
+            await jwt.verify(refresh_token,secret_key);
+        }catch(err){
+            return error(err,401);
+        }
+
+        const random = uuid();
+        let access_token = await jwt.sign({random},secret_key,{expiresIn:'180ms'});
+
+        const refresh = uuid();
+        const refresh_token = await jwt.sign({refresh_token},secret_key);
+
+        return success({access_token,expiresIn:'180ms',refresh_token},304);
+
     }
 
     return error("No Token",403);
@@ -260,7 +282,21 @@ const updatePlan = async(id,jsonBody) => {
                 if(typeof(jsonBody) == "object"){
         
                     let super_key = jsonBody["objectType"] + "__" + jsonBody['objectId'];
-                    let parameters = [];
+
+                    const superResponse = await getById(super_key);
+
+                    if(superResponse.success && superResponse.status === 204){
+                        return error("unvailable",302);
+                    }
+    
+                    if(superResponse.error){
+                        return error("Server timeout. Try after some time",401);
+                    }
+    
+                    const mainBody = superResponse.body;
+
+                    let isModified = false;
+                    let isModified1 = false;
 
                     for(let key in jsonBody){
 
@@ -277,33 +313,21 @@ const updatePlan = async(id,jsonBody) => {
 
                                 if(response.status === 204){
                                     const edge = await resources.setParameters("",key,contents);
-                                    if(edge){
-                                        parameters.push("Array"+keyCount++);
-                                        parameters.push(edge);
-                                        return parameters;
-                                    }else
-                                        console.log("no Edge"); 
 
-                                    //push the new element to array;
-                                    let result = getById(super_key);
+                                    const list_key = mainBody[key];
+                                    //push node to list
+                                    const result = await client.rpush(list_key, edge);
+                                    console.log("Node push",result);
 
-                                    if(result.status === 200){
-                                        const body = result.body;
-                                        const list_key = body[key];
-
-                                        //push node to list
-                                        result = await client.rpush(list_key, edge);
-
-                                        console.log("Node push",result);
-                                    }else{
-                                        console.log("Node push failed");
-                                    }
+                                    isModified1 = true;
                                     
                                 }else if(response.status === 200){
 
-                                    const result = await resources.updateContents(response.body,contents);
-                                    if(result.status === 201){
-
+                                    const result = await resources.updateContents(key,response.body,contents);
+                                    if(result.success){
+                                        isModified1 = true;
+                                    }else{
+                                        return result;
                                     }
                                 }
 
@@ -313,40 +337,176 @@ const updatePlan = async(id,jsonBody) => {
         
                         //Handle value of type object  
                         } else if(typeof(jsonBody[key]) === 'object'){
-        
-                            // //storing edge reference
-                            // const edge = await resources.setParameters("",key,jsonBody[key]);
-                            // parameters.push("Key"+keyCount++);
-                            // parameters.push(edge);
-                            // continue;
+                            
+                            const search_key = jsonBody[key]["objectType"] + "__" + jsonBody[key]['objectId'] + "-" + key;
+
+                            const response = await getById(search_key);
+
+                            if(response.success){
+                                const body = response.body;
+                                for(let keys in jsonBody[key]){
+
+                                    if(jsonBody[key][keys] !== body[keys]){
+                                        body[keys] = jsonBody[key][keys];
+                                    }
+                                }
+
+                                client.hmset(search_key,body, (err,res)=>{
+                                    if(err)
+                                        error("Failed to update",401);
+                                })
+
+                                isModified1 = true;
+
+                                continue;
+                            }else{
+                                let edge = await resources.setParameters("", key, jsonBody[key]);
+                                mainBody[key] = edge;
+                                isModified = true;
+                            }
+                            
                         }
-        
-                        //parent data contents
-                        // parameters.push(key);
-                        // parameters.push(jsonBody[key]);
+                        
+                        if(mainBody[key] !== jsonBody[key]){
+                            mainBody[key] = jsonBody[key];
+                            isModified = true;
+                        }
+
                     }
+
+                    if(isModified){
+                        client.hmset(super_key,mainBody, (err,res)=>{
+                            if(err)
+                                error("Error while modifying",401);
+                        });
+                    }
+
+                    if(isModified || isModified1){
+                        await resources.deletePlanETAG(id);
+                        return success("Value updated Successfully",200);
+                    }
+
                 }
             }
-
-
-            // await resources.deletePlanETAG(id);            
-
-            return("Value updated successfully");
+          
+            return success("No changes",204);
 
         }else{
             return error("Body is required");
         }
-    }
-    return error("Id is required");
-
+    }else
+        return error("Id is required");
+    
 };
 
-const patchPlan = async(id,body) => {
+const patchPlan = async(id,jsonBody) => {
 
-    if(body && id){
-        const res = await resources.patchAll(body, '',id);
-        if(res.success){
-            await resources.deletePlanETAG(id);
+    if(jsonBody && id){
+
+        const client = getRedisClient();
+
+        const getAsync = promisify(client.get).bind(client);
+
+        const super_key = await getAsync(id);
+
+        if(super_key){
+
+            const response = await getById(super_key);
+
+            const mainBody = response.body;
+
+            let isModified = false;
+            let isModified1 = false;
+
+            for(let key in jsonBody){
+
+                //Handle value of type array
+                if(Array.isArray(jsonBody[key])){
+
+                    await Promise.all(jsonBody[key].map( async (contents) => {
+
+                        const key_to_search = contents["objectType"] + "__" + contents['objectId'] + "-" + key;
+
+                        console.log("Key to search",key_to_search);
+
+                        let response = await getById(key_to_search);
+
+                        if(response.status === 204){
+                            const edge = await resources.setParameters("",key,contents);
+
+                            const list_key = mainBody[key];
+                            //push node to list
+                            const result = await client.rpush(list_key, edge);
+                            console.log("Node push",result);
+
+                            isModified1 = true;
+                            
+                        }else if(response.status === 200){
+
+                            const result = await resources.updateContents(key,response.body,contents);
+                            if(result.success){
+                                isModified1 = true;
+                            }else{
+                                return result;
+                            }
+                        }
+
+                    }));
+
+                    continue;
+
+                //Handle value of type object  
+                } else if(typeof(jsonBody[key]) === 'object'){
+                    
+                    const search_key = jsonBody[key]["objectType"] + "__" + jsonBody[key]['objectId'] + "-" + key;
+
+                    const response = await getById(search_key);
+
+                    if(response.success){
+                        const body = response.body;
+                        for(let keys in jsonBody[key]){
+
+                            if(jsonBody[key][keys] !== body[keys]){
+                                body[keys] = jsonBody[key][keys];
+                            }
+                        }
+
+                        client.hmset(search_key,body, (err,res)=>{
+                            if(err)
+                                error("Failed to update",401);
+                        })
+
+                        isModified1 = true;
+
+                        continue;
+                    }else{
+                        let edge = await resources.setParameters("", key, jsonBody[key]);
+                        mainBody[key] = edge;
+                        isModified = true;
+                    }
+                    
+                }
+                
+                if(mainBody[key] !== jsonBody[key]){
+                    mainBody[key] = jsonBody[key];
+                    isModified = true;
+                }
+
+            }
+
+            if(isModified){
+                client.hmset(super_key,mainBody, (err,res)=>{
+                    if(err)
+                        error("Error while modifying",401);
+                });
+            }
+
+            if(isModified || isModified1){
+                await resources.deletePlanETAG(id);
+                return success("Value updated Successfully",200);
+            }
+
+
         }
         return res;
 
@@ -466,5 +626,6 @@ module.exports = {
     ifNoneMatch,
     register,
     authorize,
-    verifyToken
+    verifyToken,
+    generateToken,
 }

@@ -36,7 +36,13 @@ const authorizeController = async (req,res) => {
 };
 
 const tokenController = async (req,res) => {
+    const refresh_token = req.query.code;
+    const client_id = req.query.client_id;
+    const redirect_url = req.query.redirect_url;
 
+    let result = await services.generateToken(refresh_token);
+
+    return res.status(result.status).send(result.body);
 };
 
 const getAllController = async (req,res) => {
