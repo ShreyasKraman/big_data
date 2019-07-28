@@ -14,6 +14,8 @@ import uuid from 'uuid/v4';
 
 const elasticClient = new Client({node: 'http://localhost:9200'});
 
+const root = "";
+
 const register = async(client_type,redirect_url) => {
     let res = {};
     if(secret_key.length!== 0 && client_id.length!==0){
@@ -270,6 +272,8 @@ const createPlan = async (body) => {
             const unique_key = uuid();
 
             client.set(unique_key,super_key);
+
+            root = super_key;
 
             return success("Your unique key : "+ unique_key, 201);
         }
@@ -575,25 +579,80 @@ const patchPlan = async(id,jsonBody) => {
 
 const deletePlan = async(id) => {
     if (id){
+        if(!root){
+            return error("No data exists",401);
+        }
+
         const client = await getRedisClient();
 
-        const res = await getById(id);
-        if(res.success){
-            const parameters = [];
-            console.log("Delete id",res);
-            for(let values in res.body){
-                //delete corresponding values of etag
-                parameters.push(values);
-                parameters.push(res.body[values]);
+        const getAsync = promisify(client.hgetall).bind(client);
+        const response = await getAsync(root);
+        
+        if(response.error)
+            return error("No values in redis",401);
+        
+        const jsonBody = response.body;
+
+        for(let key in jsonBody){
+            const split = jsonBody[key].split('-');
+            //add key values to res if no object or array found
+            if(split[split.length - 1] !== key){
+                res[key] = jsonBody[key];
+                continue;
             }
-            
-            console.log(parameters);
-            client.HDEL(id,parameters);
+    
+            try{
+                
+                //child node
+                const node = jsonBody[key];
 
-            await resources.deletePlanETAG(id);
+                if(id == node){
 
-            return success("Values Deleted",200);
+                    //delete contents of child node
+                    await resources.deleteObject(id);
 
+                    //delete node key in parent
+                    client.HDEL(id,key, (err,res)=>{
+                        if(err)
+                            return error("Failed to delete",401);
+                    });
+
+                    return success("Node deleted successfully",200);
+
+                }
+    
+            }catch(e){
+                if(e.code === 'WRONGTYPE'){
+                    arrayKey = key;
+                    const getAsync = promisify(client.lrange).bind(client);
+    
+                    const items = await getAsync(jsonBody[key],0,-1);
+    
+                    await Promise.all(items.map( async (element) => {
+                        
+                        const node = element;
+
+                        if(id == node){
+
+                            //delete contents of child node
+                            await resources.deleteObject(id);
+
+                            //delete child key in parent node
+                            client.HDEL(id,key, (err,res)=>{
+                                if(err)
+                                    return error("Failed to delete",401);
+                            });
+
+                            return success("Node deleted successfully",200);
+
+                        }
+
+                    }));
+    
+                }else{
+                    return error("Error while parsing",401);
+                }
+            }
         }
 
         return error("Error",404);

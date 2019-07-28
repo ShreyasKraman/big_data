@@ -273,8 +273,6 @@ const patchAll = async(body,superkey,id) => {
 
         }
 
-        console.log(data);
-
         if(!flag)
             res = success("No data modified",304);
         else{
@@ -301,6 +299,70 @@ const patchAll = async(body,superkey,id) => {
 
     return res;
 
+}
+
+//Delete object 
+const deleteObject = async(parent) => {
+    let res = {};
+    if( parent ){
+        const client = await getRedisClient();
+        const getAsync = promisify(client.hgetall).bind(client);
+        const response = await getAsync(parent);
+        if(response.error){
+            return error("Error while deleting",401);
+        }
+        const body = response.body;
+        const deleteParameters = []; 
+        for(key in body){
+
+            const split = body[key].split('-');
+            //add key values to res if no object or array found
+            if(split[split.length - 1] !== key){
+                continue;
+            }
+
+            try{
+             
+             const response = getAsync(body[key]);
+             
+             if(response.success){
+                //delete contents inside child nodes 
+                deleteObject(key);
+             }
+
+            }catch(e){
+                if(e.code === 'WRONGTYPE'){
+                    arrayKey = key;
+                    const getAsync = promisify(client.lrange).bind(client);
+
+                    const items = await getAsync(jsonBody[key],0,-1);
+
+                    //delete each node in list
+                    await Promise.all(items.map( async (element) => {
+                        
+                        const getAsync = promisify(client.hgetall).bind(client);
+                        const response = await getAsync(element);
+
+                        if(response.success)
+                            await deleteObject(element);
+
+                    }));
+                }
+            }
+
+            deleteParameters.push(key);
+            deleteParameters.push(body[key]);
+
+        }
+
+        await client.HDEL(parent,deleteParameters, (err,res)=>{
+            if(err)
+                return error("Error while deleting");
+        });
+
+    }
+
+    return res;
 }
 
 //Delete etag
@@ -355,5 +417,6 @@ module.exports = {
     setParameters,
     updateContents,
     patchAll,
+    deleteObject,
     deletePlanETAG
 }
