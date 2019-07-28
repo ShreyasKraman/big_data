@@ -1,7 +1,10 @@
 import { getRedisClient } from '../dbstore/redis';
 import {promisify} from 'util';
 import { success, error } from './response';
-import services from '../services/services';
+
+import {Client} from '@elastic/elasticsearch';
+
+const elasticClient = new Client({node: 'http://localhost:9200'});
 
 //Compare two ids
 const compare = (id, id2) => {
@@ -66,6 +69,18 @@ const setParameters = async (superkey, key, data) => {
 
         const client = await getRedisClient();
         // console.log("Parameters",parameters);
+
+        const body = {};
+
+        for(let i=0;i<parameters.length;i+=2){
+            body[parameters[i]] = parameters[i+1];
+        }
+
+        await elasticClient.index({
+            index: "Plan-"+key,
+            body,
+        })
+
         await client.hmset(subkey,parameters, (err,res) => {
             if(err){
                 console.log("Child Key ",err);

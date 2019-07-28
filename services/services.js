@@ -5,10 +5,14 @@ import resources from '../utils/resource';
 import {promisify} from 'util';
 import {secret_key,client_id} from '../utils/keys';
 
+import {Client} from '@elastic/elasticsearch'
+
 import jwt from 'jsonwebtoken';
 
 import uuid from 'uuid/v4';
 
+
+const client = new Client({node: 'http://localhost:9200'});
 
 const register = async(client_type,redirect_url) => {
     let res = {};
@@ -33,7 +37,9 @@ const authorize = async (body) => {
     if(body){
         const client_id = body["client_id"];
         let token = await jwt.sign({client_id},secret_key,{expiresIn:'180ms'});
-        const refresh_token = await jwt.sign({uuid()},secret_key);
+
+        const refresh_uuid = uuid();
+        const refresh_token = await jwt.sign({refresh_uuid},secret_key);
         const redirect_url = body.redirect_uri + "?" + body.response_type + "=" + token + "&state="+body.state;
         return success({redirect_url,refresh_token},302);
     }
