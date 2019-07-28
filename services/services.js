@@ -12,7 +12,7 @@ import jwt from 'jsonwebtoken';
 import uuid from 'uuid/v4';
 
 
-const client = new Client({node: 'http://localhost:9200'});
+const elasticClient = new Client({node: 'http://localhost:9200'});
 
 const register = async(client_type,redirect_url) => {
     let res = {};
@@ -249,6 +249,17 @@ const createPlan = async (body) => {
                 parameters.push(jsonBody[key]);
             }
 
+            const updatedBody = {};
+            for(let i=0;i<parameters.length;i+=2){
+                updatedBody[parameters[i]] = parameters[i+1]; 
+            }
+
+            const index = "Plan-"+jsonBody["objectType"];
+            await elasticClient.index({
+                index,
+                body:updatedBody,
+            });
+
             //set parent id
             client.hmset(super_key,parameters, (err, res) => {
                 if(err){
@@ -351,16 +362,26 @@ const updatePlan = async(id,jsonBody) => {
                             if(response.success){
                                 const body = response.body;
                                 for(let keys in jsonBody[key]){
-
                                     if(jsonBody[key][keys] !== body[keys]){
                                         body[keys] = jsonBody[key][keys];
                                     }
                                 }
 
+                                const updatedBody = {};
+                                for(let i=0;i<body.length;i+=2){
+                                    updatedBody[body[i]] = body[i+1]; 
+                                }
+
+                                const index = "Plan-"+body["objectType"];
+                                await elasticClient.index({
+                                    index,
+                                    body:updatedBody,
+                                });
+
                                 client.hmset(search_key,body, (err,res)=>{
                                     if(err)
                                         error("Failed to update",401);
-                                })
+                                });
 
                                 isModified1 = true;
 
@@ -381,6 +402,17 @@ const updatePlan = async(id,jsonBody) => {
                     }
 
                     if(isModified){
+
+                        const updatedBody = {};
+                        for(let i=0;i<mainBody.length;i+=2){
+                            updatedBody[mainBody[i]] = mainBody[i+1]; 
+                        
+                        const index = jsonBody["objectType"];
+                        await elasticClient.index({
+                            index,
+                            body:updatedBody,
+                        });
+
                         client.hmset(super_key,mainBody, (err,res)=>{
                             if(err)
                                 error("Error while modifying",401);
@@ -477,6 +509,16 @@ const patchPlan = async(id,jsonBody) => {
                             }
                         }
 
+                        const updatedBody = {};
+                        for(let i=0;i<body.length;i+=2){
+                            updatedBody[body[i]] = body[i+1]; 
+                        }
+                        const index = "Plan-"+body["objectType"];
+                        await elasticClient.index({
+                            index,
+                            body:updatedBody,
+                        });
+
                         client.hmset(search_key,body, (err,res)=>{
                             if(err)
                                 error("Failed to update",401);
@@ -501,6 +543,15 @@ const patchPlan = async(id,jsonBody) => {
             }
 
             if(isModified){
+                const updatedBody = {};
+                for(let i=0;i<mainBody.length;i+=2){
+                    updatedBody[body[i]] = mainBody[i+1]; 
+                }
+                const index = "Plan-"+mainBody["objectType"];
+                await elasticClient.index({
+                    index,
+                    body:updatedBody,
+                });
                 client.hmset(super_key,mainBody, (err,res)=>{
                     if(err)
                         error("Error while modifying",401);

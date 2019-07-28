@@ -76,9 +76,12 @@ const setParameters = async (superkey, key, data) => {
             body[parameters[i]] = parameters[i+1];
         }
 
+        const index = "Plan-"+key;
+
+        console.log(index.toLowerCase(),body);
         await elasticClient.index({
-            index: "Plan-"+key,
-            body,
+            index:index.toLowerCase(),
+            body: body,
         })
 
         await client.hmset(subkey,parameters, (err,res) => {
@@ -118,6 +121,13 @@ const updateContents = async(keys,contents, newContents) =>{
 
                     if(result.isModified){
                         const body = result.body;
+                        const index = "Plan-"+key;
+                        //update value in elastic search
+                        await elasticClient.index({
+                            index:index.toLowerCase(),
+                            body: body,
+                        });
+
                         client.hmset(search_key,body, (err,res)=>{
                             if(err)
                                 error("Unable to update",401);
@@ -142,6 +152,18 @@ const updateContents = async(keys,contents, newContents) =>{
     }
 
     if(isModified){
+
+        const updatedBody = {};
+        for(let i=0;i<contents.length;i+=2){
+            updatedBody[contents[i]] = contents[i+1]; 
+        }
+
+        const index = "Plan-"+keys;
+        await elasticClient.index({
+            index,
+            body:updatedBody,
+        });
+
         const super_key = contents["objectType"] + "__" + contents['objectId'] + "-" + keys;
         client.hmset(super_key,contents, (err,res) => {
             if(err)
@@ -184,8 +206,6 @@ const patchAll = async(body,superkey,id) => {
         //Handlevalues of type Array
         if(Array.isArray(body[key])){
             await Promise.all(body[key].map( async (contents) => {
-
-
 
                 const result = await patchAll(contents,key,id);
 
