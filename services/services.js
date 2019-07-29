@@ -14,7 +14,7 @@ import uuid from 'uuid/v4';
 
 const elasticClient = new Client({node: 'http://localhost:9200'});
 
-const root = "";
+let root = "plan__12xvxc345ssdsds-508";
 
 const register = async(client_type,redirect_url) => {
     let res = {};
@@ -231,7 +231,7 @@ const createPlan = async (body) => {
 
                         parameters.push(key);
                         parameters.push(newKey);
-                        console.log("Array push",result);
+                        
                     }
 
                     continue;
@@ -256,9 +256,10 @@ const createPlan = async (body) => {
                 updatedBody[parameters[i]] = parameters[i+1]; 
             }
 
-            const index = "Plan-"+jsonBody["objectType"];
+            const index = "Plan-"+super_key;
             await elasticClient.index({
-                index,
+                index: index.toLowerCase(),
+                id:super_key,
                 body:updatedBody,
             });
 
@@ -290,15 +291,13 @@ const updatePlan = async(id,jsonBody) => {
 
             // await createPlan(body);
 
-            const response = validateJson(jsonBody);
+            // const response = validateJson(jsonBody);
     
-            if(response.error){
-                return error(response.message, 401);
-            }
+            // if(response.error){
+            //     return error(response.message, 401);
+            // }
 
             const client = await getRedisClient();
-
-            if(client){
         
                 if(typeof(jsonBody) == "object"){
         
@@ -376,9 +375,10 @@ const updatePlan = async(id,jsonBody) => {
                                     updatedBody[body[i]] = body[i+1]; 
                                 }
 
-                                const index = "Plan-"+body["objectType"];
+                                const index = "Plan-"+search_key;
                                 await elasticClient.index({
-                                    index,
+                                    index:index.toLowerCase(),
+                                    id:search_key,
                                     body:updatedBody,
                                 });
 
@@ -411,9 +411,10 @@ const updatePlan = async(id,jsonBody) => {
                         for(let i=0;i<mainBody.length;i+=2){
                             updatedBody[mainBody[i]] = mainBody[i+1]; 
                         
-                        const index = jsonBody["objectType"];
+                        const index = super_key;
                         await elasticClient.index({
-                            index,
+                            index:index.toLowerCase(),
+                            id:super_key,
                             body:updatedBody,
                         });
 
@@ -517,16 +518,17 @@ const patchPlan = async(id,jsonBody) => {
                         for(let i=0;i<body.length;i+=2){
                             updatedBody[body[i]] = body[i+1]; 
                         }
-                        const index = "Plan-"+body["objectType"];
+                        const index = "Plan-"+search_key;
                         await elasticClient.index({
-                            index,
+                            index:index.toLowerCase(),
+                            id:search_key,
                             body:updatedBody,
                         });
 
                         client.hmset(search_key,body, (err,res)=>{
                             if(err)
                                 error("Failed to update",401);
-                        })
+                        });
 
                         isModified1 = true;
 
@@ -551,11 +553,13 @@ const patchPlan = async(id,jsonBody) => {
                 for(let i=0;i<mainBody.length;i+=2){
                     updatedBody[body[i]] = mainBody[i+1]; 
                 }
-                const index = "Plan-"+mainBody["objectType"];
+                const index = "Plan-"+super_key;
                 await elasticClient.index({
-                    index,
+                    index:index.toLowerCase(),
+                    id:super_key,
                     body:updatedBody,
                 });
+
                 client.hmset(super_key,mainBody, (err,res)=>{
                     if(err)
                         error("Error while modifying",401);
@@ -569,8 +573,6 @@ const patchPlan = async(id,jsonBody) => {
 
 
         }
-        return res;
-
     }
 
     return error("No body",401);
@@ -583,21 +585,29 @@ const deletePlan = async(id) => {
             return error("No data exists",401);
         }
 
+        if(id === root){
+            await resources.deleteObject(id);
+
+            return success("Object deleted",200);
+        }
+
         const client = await getRedisClient();
 
-        const getAsync = promisify(client.hgetall).bind(client);
-        const response = await getAsync(root);
-        
+        const response = await getById(root);
+
         if(response.error)
             return error("No values in redis",401);
         
         const jsonBody = response.body;
 
+        console.log("JSON BODY",jsonBody);
+
+        const deleteParameters = [];
+
         for(let key in jsonBody){
             const split = jsonBody[key].split('-');
             //add key values to res if no object or array found
             if(split[split.length - 1] !== key){
-                res[key] = jsonBody[key];
                 continue;
             }
     
@@ -610,14 +620,8 @@ const deletePlan = async(id) => {
 
                     //delete contents of child node
                     await resources.deleteObject(id);
-
-                    //delete node key in parent
-                    client.HDEL(id,key, (err,res)=>{
-                        if(err)
-                            return error("Failed to delete",401);
-                    });
-
-                    return success("Node deleted successfully",200);
+                    
+                    return success("Values deleted",200);
 
                 }
     
@@ -637,25 +641,21 @@ const deletePlan = async(id) => {
                             //delete contents of child node
                             await resources.deleteObject(id);
 
-                            //delete child key in parent node
-                            client.HDEL(id,key, (err,res)=>{
-                                if(err)
-                                    return error("Failed to delete",401);
-                            });
-
-                            return success("Node deleted successfully",200);
+                            return success("Values deleted",200);
 
                         }
 
                     }));
+
+                    continue;
     
                 }else{
                     return error("Error while parsing",401);
                 }
             }
         }
-
-        return error("Error",404);
+        
+        return success("No value Deleted",200);
 
     }
 

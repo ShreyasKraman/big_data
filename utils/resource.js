@@ -76,11 +76,12 @@ const setParameters = async (superkey, key, data) => {
             body[parameters[i]] = parameters[i+1];
         }
 
-        const index = "Plan-"+key;
+        const index = "Plan-"+subkey;
 
-        console.log(index.toLowerCase(),body);
+        // console.log(index.toLowerCase(),body);
         await elasticClient.index({
             index:index.toLowerCase(),
+            id:subkey,
             body: body,
         })
 
@@ -121,10 +122,11 @@ const updateContents = async(keys,contents, newContents) =>{
 
                     if(result.isModified){
                         const body = result.body;
-                        const index = "Plan-"+key;
+                        const index = "Plan-"+search_key;
                         //update value in elastic search
                         await elasticClient.index({
                             index:index.toLowerCase(),
+                            id:search_key,
                             body: body,
                         });
 
@@ -158,13 +160,14 @@ const updateContents = async(keys,contents, newContents) =>{
             updatedBody[contents[i]] = contents[i+1]; 
         }
 
-        const index = "Plan-"+keys;
+        const super_key = contents["objectType"] + "__" + contents['objectId'] + "-" + keys;
+        const index = "Plan-"+ super_key;
         await elasticClient.index({
-            index,
+            index:index.toLowerCase(),
+            id:super_key,
             body:updatedBody,
         });
 
-        const super_key = contents["objectType"] + "__" + contents['objectId'] + "-" + keys;
         client.hmset(super_key,contents, (err,res) => {
             if(err)
                 return error("Error while modifying",401);
@@ -307,13 +310,15 @@ const deleteObject = async(parent) => {
     if( parent ){
         const client = await getRedisClient();
         const getAsync = promisify(client.hgetall).bind(client);
-        const response = await getAsync(parent);
-        if(response.error){
+        const body = await getAsync(parent);
+        if(!body){
             return error("Error while deleting",401);
         }
-        const body = response.body;
         const deleteParameters = []; 
-        for(key in body){
+        for(let key in body){
+
+            deleteParameters.push(key);
+            deleteParameters.push(body[key]);
 
             const split = body[key].split('-');
             //add key values to res if no object or array found
@@ -322,42 +327,59 @@ const deleteObject = async(parent) => {
             }
 
             try{
-             
-             const response = getAsync(body[key]);
-             
-             if(response.success){
-                //delete contents inside child nodes 
-                deleteObject(key);
-             }
+                
+                const response = await getAsync(body[key]);
+                if(response !== 'undefined'){
+                    //delete contents inside child nodes 
+                    await deleteObject(body[key]);
+                }
 
             }catch(e){
                 if(e.code === 'WRONGTYPE'){
-                    arrayKey = key;
-                    const getAsync = promisify(client.lrange).bind(client);
+                    let getAsync = promisify(client.lrange).bind(client);
 
-                    const items = await getAsync(jsonBody[key],0,-1);
+                    const items = await getAsync(body[key],0,-1);
 
-                    //delete each node in list
-                    await Promise.all(items.map( async (element) => {
-                        
-                        const getAsync = promisify(client.hgetall).bind(client);
-                        const response = await getAsync(element);
+                    getAsync = promisify(client.hgetall).bind(client);
+                    for(let i=0;i<items.length;i++){
+                        const response = await getAsync(items[i]);
+                        if(response !== 'undefined')
+                            await deleteObject(items[i]);
+                    }
 
-                        if(response.success)
-                            await deleteObject(element);
+                    await client.DEL(body[key], (err,res)=>{
+                        if(err)
+                            console.log("Array Key delete error",err);
+                    })
 
-                    }));
-                }
+                    // //delete each node in list
+                    // await items.map( async (element) => {
+
+                    //     const getAsync = promisify(client.hgetall).bind(client);
+                    //     const response = await getAsync(element);
+                    //     if(response !== 'undefined')
+                    //         await deleteObject(element);
+
+                    // });
+                    
+                }else
+                    console.log("Error",e);
             }
-
-            deleteParameters.push(key);
-            deleteParameters.push(body[key]);
 
         }
 
+        const index = 'Plan-'+parent;
+
+        console.log("indexing",index.toLowerCase());
+
+        await elasticClient.delete({index:index.toLowerCase(),id:parent});
+
+        // console.log(parent,deleteParameters);
         await client.HDEL(parent,deleteParameters, (err,res)=>{
-            if(err)
+            if(err){
+                console.log(err);
                 return error("Error while deleting");
+            }
         });
 
     }
