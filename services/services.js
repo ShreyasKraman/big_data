@@ -3,7 +3,7 @@ import { success, error } from '../utils/response';
 import { getRedisClient } from '../dbstore/redis';
 import resources from '../utils/resource';
 import {promisify} from 'util';
-import {secret_key,client_id} from '../utils/keys';
+import {secret_key,client_id, refresh_secret_key} from '../utils/keys';
 
 import {Client} from '@elastic/elasticsearch'
 
@@ -14,8 +14,10 @@ import uuid from 'uuid/v4';
 
 const elasticClient = new Client({node: 'http://localhost:9200'});
 
+//root of the document. Hard coded, in case ;)
 let root = "plan__12xvxc345ssdsds-508";
 
+//register client id
 const register = async(client_type,redirect_url) => {
     let res = {};
     if(secret_key.length!== 0 && client_id.length!==0){
@@ -35,13 +37,13 @@ const register = async(client_type,redirect_url) => {
     return error("Failed to register",403);
 }
 
+//Authorize token and return redirect url with refresh token
 const authorize = async (body) => {
     if(body){
         const client_id = body["client_id"];
-        let token = await jwt.sign({client_id},secret_key,{expiresIn:'180ms'});
+        let token = await jwt.sign({client_id},secret_key,{expiresIn:'300000'}); //5 mins expiry
 
-        const refresh_uuid = uuid();
-        const refresh_token = await jwt.sign({refresh_uuid},secret_key);
+        const refresh_token = await jwt.sign({client_id},refresh_secret_key);
         const redirect_url = body.redirect_uri + "?" + body.response_type + "=" + token + "&state="+body.state;
         return success({redirect_url,refresh_token},302);
     }
@@ -50,6 +52,7 @@ const authorize = async (body) => {
 
 }
 
+//verify token with signature
 const verifyToken = async (token) => {
     if(token){
         try{
@@ -64,23 +67,21 @@ const verifyToken = async (token) => {
     return error("No Token",403);
 }
 
-const generateToken = async (refresh_token) => {
+//Upon token expiry, generate access token and new refresh token
+const generateToken = async (refresh_token,client_id) => {
     if(refresh_token){
 
         try{
-            await jwt.verify(refresh_token,secret_key);
+            await jwt.verify(refresh_token,refresh_secret_key);
         }catch(err){
             return error(err,401);
         }
 
-        const random = uuid();
-        let access_token = await jwt.sign({random},secret_key,{expiresIn:'180ms'});
+        let access_token = await jwt.sign({client_id},secret_key,{expiresIn:'300000'});
 
-        const refresh = uuid();
-        const refresh_token = await jwt.sign({refresh_token},secret_key);
+        const new_refresh_token = await jwt.sign({client_id},refresh_secret_key);
 
-        return success({access_token,expiresIn:'180ms',refresh_token},304);
-
+        return success({access_token,new_refresh_token},302);
     }
 
     return error("No Token",403);
@@ -90,6 +91,7 @@ const getAll = async() => {
 
 };
 
+//Service to get data by id
 const getById = async (id) => {
 
     const client = await getRedisClient();
@@ -105,7 +107,7 @@ const getById = async (id) => {
             return success(res, 200);
         }
 
-        return success("No corresponding values found", 204);
+        return error("No corresponding values found", 204);
 
     }
 
@@ -113,6 +115,7 @@ const getById = async (id) => {
 
 };
 
+//ETAG - IF NONE Match Found
 const ifNoneMatch = async (etag,id) => {
 
     const client = await getRedisClient()
@@ -132,7 +135,7 @@ const ifNoneMatch = async (etag,id) => {
 
     const json_id = await getAsync(id.trim()); // get the root id of JSON request stored
     let result = {};
-    if(json_id){
+    if(json_id !== 'undefined'){
         res = await getById(json_id); // get the children of root id
         if(res.success){
             
@@ -164,10 +167,12 @@ const ifNoneMatch = async (etag,id) => {
     }
 
     //return error or no values found for the id
-    return error("No values found",204);
+    return error("No content",204);
 
 }
 
+
+//ETAG _ IF Match found
 const ifMatch = async (etag) => {
 
     if(etag){
@@ -188,10 +193,13 @@ const ifMatch = async (etag) => {
 
 }
 
+
+//Create method (POST) plan
 const createPlan = async (body) => {
 
     const jsonBody = body;
 
+    //validate user body according to schema
     const response = validateJson(jsonBody);
     
     if(response.error){
@@ -203,6 +211,11 @@ const createPlan = async (body) => {
     if(client){
         
         if(typeof(jsonBody) == "object"){
+
+            //object id is mandatory
+            const valid = await resources.checkObject(jsonBody);
+            if(valid.error)
+                return error(valid.body,valid.status);
 
             let super_key = jsonBody["objectType"] + "__" + jsonBody['objectId'];
             let parameters = [];
@@ -289,17 +302,14 @@ const updatePlan = async(id,jsonBody) => {
     if(id){
         if(jsonBody){
 
-            // await createPlan(body);
-
-            // const response = validateJson(jsonBody);
-    
-            // if(response.error){
-            //     return error(response.message, 401);
-            // }
-
             const client = await getRedisClient();
         
                 if(typeof(jsonBody) == "object"){
+
+                    //object id is mandatory
+                    const valid = await resources.checkObject(jsonBody);
+                    if(valid.error)
+                        return error(valid.body,valid.status);
         
                     let super_key = jsonBody["objectType"] + "__" + jsonBody['objectId'];
 
@@ -370,16 +380,11 @@ const updatePlan = async(id,jsonBody) => {
                                     }
                                 }
 
-                                const updatedBody = {};
-                                for(let i=0;i<body.length;i+=2){
-                                    updatedBody[body[i]] = body[i+1]; 
-                                }
-
                                 const index = "Plan-"+search_key;
                                 await elasticClient.index({
                                     index:index.toLowerCase(),
                                     id:search_key,
-                                    body:updatedBody,
+                                    body:body,
                                 });
 
                                 client.hmset(search_key,body, (err,res)=>{
@@ -394,28 +399,23 @@ const updatePlan = async(id,jsonBody) => {
                                 let edge = await resources.setParameters("", key, jsonBody[key]);
                                 mainBody[key] = edge;
                                 isModified = true;
-                            }
-                            
+                            }   
                         }
                         
                         if(mainBody[key] !== jsonBody[key]){
                             mainBody[key] = jsonBody[key];
-                            isModified = true;
+                            isModified1 = true;
                         }
 
                     }
 
                     if(isModified){
-
-                        const updatedBody = {};
-                        for(let i=0;i<mainBody.length;i+=2){
-                            updatedBody[mainBody[i]] = mainBody[i+1]; 
                         
                         const index = super_key;
                         await elasticClient.index({
                             index:index.toLowerCase(),
                             id:super_key,
-                            body:updatedBody,
+                            body:mainBody,
                         });
 
                         client.hmset(super_key,mainBody, (err,res)=>{
@@ -429,7 +429,6 @@ const updatePlan = async(id,jsonBody) => {
                         return success("Value updated Successfully",200);
                     }
 
-                }
             }
           
             return success("No changes",204);
@@ -600,10 +599,6 @@ const deletePlan = async(id) => {
         
         const jsonBody = response.body;
 
-        console.log("JSON BODY",jsonBody);
-
-        const deleteParameters = [];
-
         for(let key in jsonBody){
             const split = jsonBody[key].split('-');
             //add key values to res if no object or array found
@@ -614,9 +609,9 @@ const deletePlan = async(id) => {
             try{
                 
                 //child node
-                const node = jsonBody[key];
+                const response = await getById(jsonBody[key]);
 
-                if(id == node){
+                if(id === jsonBody[key]){
 
                     //delete contents of child node
                     await resources.deleteObject(id);
@@ -627,25 +622,60 @@ const deletePlan = async(id) => {
     
             }catch(e){
                 if(e.code === 'WRONGTYPE'){
-                    arrayKey = key;
                     const getAsync = promisify(client.lrange).bind(client);
     
                     const items = await getAsync(jsonBody[key],0,-1);
     
-                    await Promise.all(items.map( async (element) => {
+                    let res = await Promise.all(items.map( async (element) => {
                         
                         const node = element;
-
-                        if(id == node){
-
+                        console.log(id,node);
+                        if(id === node){
+                            console.log("Match found");
                             //delete contents of child node
                             await resources.deleteObject(id);
 
-                            return success("Values deleted",200);
+                            await client.LREM(jsonBody[key], 0, id, (err,res)=>{
+                                if(err)
+                                    console.log("Array Key delete error",err);
+                            });
 
+                            return Promise.resolve(success("Values deleted",200));
+
+                        }else{
+                            const getAsync = promisify(client.hgetall).bind(client);
+                            const response = await getAsync(node);
+
+                            if(response){
+                                const body = response;
+                                for(let elementKey in body){
+                                    const split = body[elementKey].split('-');
+                                    //add key values to res if no object or array found
+                                    if(split[split.length - 1] !== elementKey){
+                                        continue;
+                                    }
+
+                                    if(id === body[elementKey]){
+                                        await resources.deleteObject(body[elementKey]);
+
+                                        client.HDEL(id,elementKey,(err,res)=>{
+                                            if(err)
+                                                console.log("Error while deleting");
+                                        });
+
+                                        return Promise.resolve( success("Values deleted",200));
+                                    }
+
+                                }
+                            }
                         }
 
+                        return Promise.resolve(Success("No value deleted"),200);
+
                     }));
+
+                    if(res.error || res.success)
+                        return res;
 
                     continue;
     
@@ -671,6 +701,14 @@ const buildResponse = async(jsonBody) => {
     let arrayKey = '';
 
     const client = getRedisClient();
+
+    console.log("JsonBody",jsonBody);
+
+    if(!jsonBody)
+        return "";
+    //if body is empty skip that element
+    if(jsonBody === 'undefined' || Object.entries(jsonBody).length === 0)
+        return "";
 
     for(let key in jsonBody){
 

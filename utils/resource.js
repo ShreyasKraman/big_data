@@ -39,6 +39,14 @@ const retrieveNodeObject = async (id,matchKey) => {
 
 }
 
+const checkObject = (jsonBody) => {
+
+    if(! ("objectId" in jsonBody) && !("objectType" in jsonBody) )
+        return error("Object Id and Object type are mandatory",401);
+
+    return success("Valid",200);
+}
+
 //Store nodes and their data
 const setParameters = async (superkey, key, data) => {
     if(typeof data === 'object'){
@@ -440,5 +448,6 @@ module.exports = {
     updateContents,
     patchAll,
     deleteObject,
-    deletePlanETAG
+    deletePlanETAG,
+    checkObject
 }
